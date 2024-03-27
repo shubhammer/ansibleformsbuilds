@@ -1,0 +1,222 @@
+name: Configure Snapmirror of an Existing Volume
+type: ansible
+playbook: createsnapmirror.yml
+description: This workflow will configure Snapmirror on an existing NetApp Volume.
+roles:
+  - public
+categories:
+  - Cenitex Playbooks
+tileClass: has-background-info-light
+icon: hard-drive
+fields:
+  - name: Prod_aiqumserver
+    type: enum
+    label: Prod AIQUM Server
+    values:
+      - IP: 192.168.0.71
+        Location: T2
+      - IP: 192.168.0.72
+        Location: T4
+    group: Snapmirror Configuration
+    line: line1
+  - name: ProdCluster
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(Prod_aiqumserver)/api/datacenter/cluster/clusters','','AIQUM','[.records[]]')
+    label: Cluster Name
+    default: __auto__
+    columns:
+      - name
+      - management_ip
+      - location
+    outputObject: false
+    previewColumn: management_ip
+    valueColumn: management_ip
+    group: Snapmirror Configuration
+    line: line1
+  - name: ONTAP_cred
+    type: expression
+    expression: "'$(ProdCluster.name)'"
+    label: ONTAP Creds
+    runLocal: true
+    default: __auto__
+    asCredential: true
+    hide: true
+    group: Snapmirror Configuration
+  - name: vservername
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/svm/svms?order_by=name','','$(ProdCluster.name)','[.records[]]')
+    label: SVM Name
+    columns:
+      - name
+    valueColumn: name
+    line: line1
+    group: Snapmirror Configuration
+  - name: volname
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/storage/volumes?svm=$(vservername.name)&state=online&order_by=name&fields=**','','$(ProdCluster.name)','[.records[]
+      | {"Name":.name, "Size(GB)":.space.size | fn2GB | round,
+      "Used":.space.used | fn2GB | round, "Available":.space.available | fn2GB |
+      round, language:.language, style:.nas.security_style }]')
+    columns:
+      - Name
+      - Size(GB)
+      - Used
+    valueColumn: "*"
+    previewColumn: Name
+    label: Volume Name
+    group: Snapmirror Configuration
+    line: line1
+  - name: SM_Details
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/private/cli/snapmirror/list-destination?source_volume=$(volname)&source_vserver=$(vservername.name)','','$(ProdCluster.name)','[.records[]
+      | {"Destination Path":.destination_path,"Destination
+      Vserver":.destination_vserver,"Destination Volume":.destination_volume}]')
+    columns:
+      - Destination Path
+      - Destination Vserver
+      - Destination Volume
+    valueColumn: destination_path
+    previewColumn: destination_path
+    default: __auto__
+    label: Existing Snapmirrors
+    group: Snapmirror Configuration
+  - name: volname_style
+    type: expression
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/storage/volumes?svm=$(vservername.name)&order_by=name&fields=nas&name=$(volname)','','$(ProdCluster.name)','[.records[]
+      | {style:.nas.security_style }]')
+    valueColumn: style
+    previewColumn: Name
+    hide: true
+    group: Snapmirror Configuration
+    line: line1
+  - name: DR_aiqumserver
+    type: enum
+    label: Backup AIQUM Server
+    values:
+      - IP: 192.168.0.71
+        Location: T2
+      - IP: 192.168.0.72
+        Location: T4
+    group: Backup Configuration
+    line: line1
+  - name: BackupCluster
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(DR_aiqumserver)/api/datacenter/cluster/clusters?name=!$(ProdCluster.name)','','AIQUM','[.records[]]')
+    label: DR/Backup Cluster
+    default: __auto__
+    columns:
+      - name
+      - management_ip
+      - location
+    outputObject: false
+    previewColumn: management_ip
+    line: line1
+    valueColumn: management_ip
+    group: Backup Configuration
+  - name: backup_cred
+    type: expression
+    expression: "'$(BackupCluster.name)'"
+    label: ONTAP Creds
+    runLocal: true
+    default: __auto__
+    asCredential: true
+    hide: true
+    group: Backup Configuration
+  - name: SVM_Peer
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(BackupCluster.management_ip)/api/svm/peers?peer.svm.name=$(vservername.name)&fields=*&peer.cluster.name=$(ProdCluster.name)','','$(BackupCluster.name)','[.records[]  |
+      {"DR_SVM":.svm.name,"Prd_Local_Name":.name}]')
+    label: Peer Vserver
+    columns:
+      - DR_SVM
+    valueColumn: "*"
+    group: Backup Configuration
+  - name: DR_aggrname
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(BackupCluster.management_ip)/api/storage/aggregates?fields=*&order_by=name','','$(BackupCluster.name)','[.records[]|
+      {"Name":.name, "Size(GB)":.space.block_storage.size | fn2GB | round,
+      "available(GB)":.space.block_storage.available | fn2GB | round, "used
+      %":.space.block_storage.used_percent}]' )
+    label: Backup Aggregate Name
+    valueColumn: Name
+    previewColumn: Name
+    group: Backup Configuration
+    line: line1
+  - name: DR_All_volumes
+    type: expression
+    expression: fn.fnRestBasic('get','https://$(BackupCluster.management_ip)/api/storage/volumes?svm=$(SVM_Peer.name)&order_by=name','','$(BackupCluster.name)','[.records[]
+      | {"Name":.name}]')
+    columns:
+      - Name
+    valueColumn: Name
+    previewColumn: Name
+    hide: true
+  - name: DR_Find_Volumes
+    type: expression
+    expression: fnArray.from($(DR_All_volumes)).some(volume =>
+      volume.Name.toLowerCase() === "$(DR_volname)".toLowerCase())
+    runLocal: true
+    hide: true
+  - name: DR_volname
+    type: text
+    label: Backup Volume Name
+    line: line4
+    validIfNot:
+      field: DR_Find_Volumes
+      description: Volume Name Already Exist
+    default: sv_$(volname)
+    group: Backup Configuration
+  - name: DR_size
+    type: number
+    label: Size(in GB)
+    line: line4
+    group: Backup Configuration
+  - name: SMPolicy
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(BackupCluster.management_ip)/api/snapmirror/policies?order_by=name&fields=*','','$(BackupCluster.name)','[.records[]]')
+    label: Snapmirror Policy
+    columns:
+      - name
+      - type
+    valueColumn: name
+    line: line5
+    group: Backup Configuration
+  - name: cron
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(BackupCluster.management_ip)/api/cluster/schedules?order_by=name','','$(BackupCluster.name)','[.records[]]')
+    label: Schedule
+    columns:
+      - name
+    valueColumn: name
+    line: line5
+    group: Backup Configuration
+  - name: DR_Share
+    type: checkbox
+    label: Do you need Backup volume Share Created??
+    dependencies:
+      - name: volname_style
+        values:
+          - ntfs
+    group: Backup Configuration
+  - name: DR_ShareName
+    type: text
+    label: Backup Share Name
+    default: $(DR_volname)
+    dependencies:
+      - name: DR_Share
+        values:
+          - true
+    group: Backup Share
+  - name: DR_ShareProperties
+    type: enum
+    label: Backup Share Show-Snapshot Property
+    default: No
+    values:
+      - Yes
+      - No
+    dependencies:
+      - name: DR_Share
+        values:
+          - true
+    group: Backup Share
+source: createsnapmirror.yaml

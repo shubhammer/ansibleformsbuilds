@@ -1,0 +1,127 @@
+---
+- hosts: localhost
+  gather_facts: false
+  collections:
+    - netapp.ontap
+  vars:
+    share_properties_base: ['oplocks', 'browsable', 'changenotify']
+    prod_clusterlogin: &prod_clusterlogin
+      hostname: "{{ ProdCluster }}"
+      username: "{{ ONTAP_cred.user }}"
+      password: "{{ ONTAP_cred.password }}"
+      https: true
+      validate_certs: no
+    dr_clusterlogin: &dr_clusterlogin
+      hostname: "{{ BackupCluster }}"
+      username: "{{ backup_cred.user }}"
+      password: "{{ backup_cred.password }}"
+      https: true
+      validate_certs: no
+  tasks:
+    - name: Create Production Cluster Volume
+      netapp.ontap.na_ontap_volume:
+          state: present
+          name: "{{ volname }}"
+          aggregate_name: "{{ aggrname }}"
+          size: "{{ size }}"
+          size_unit: gb
+          vserver: "{{ vservername }}"
+          wait_for_completion: True
+          space_guarantee: none
+          type: "{{ Type }}"
+          language: "{{ Language }}"
+          junction_path: "{{ Junction_path }}"
+          volume_security_style: "{{ Style }}"
+          <<: *prod_clusterlogin
+    - name: Create Production Share  
+      netapp.ontap.na_ontap_cifs:
+        state: present
+        name: "{{ prod_ShareName }}"
+        path: "{{  Junction_path }}"
+        vserver: "{{ vservername }}"
+        share_properties: "{{ share_properties_base + (['show_previous_versions'] if prod_ShareProperties == 'Yes' else []) }}"
+        <<: *prod_clusterlogin
+      when: Style == 'ntfs'
+    - name: Create Production Export Policy
+      na_ontap_export_policy:
+          state: present
+          name: "{{ vservername }}_{{ volname }}_IP"
+          vserver: "{{ vservername }}"
+          <<: *prod_clusterlogin
+      when: Style == 'unix' and exportpolicy == 'Create New'
+      register: export_policy_creation_result
+    - name: Create Export Policy Rules
+      na_ontap_export_policy_rule:
+        state: present
+        name: "{{ vservername }}_{{ volname }}_IP"
+        vserver: "{{ vservername }}"
+        client_match: "{{ item.clientmatch }}"
+        ro_rule: "{{ item.rorule }}"
+        rw_rule: "{{ item.rwrule }}"
+        super_user_security: "{{ item.superuser }}"
+        protocol: "{{ item.Protocol }}"
+        <<: *prod_clusterlogin
+      loop: "{{ export }}"
+      when: Style == 'unix' and exportpolicy == 'Create New'
+    - name: Set fact for export policy creation
+      set_fact:
+        export_policy_created: true
+      when: export_policy_creation_result is changed
+    - name: Set export policy name based on condition
+      set_fact:
+        export_policy_name: "{{ vservername }}_{{ volname }}_IP"
+      when: export_policy_created | default(false) | bool and Style == 'unix'
+    - name: Set alternative export policy name if condition not met
+      set_fact:
+        export_policy_name: "{{ exportpolicyname }}"
+      when: not (export_policy_created | default(false) | bool) and Style == 'unix'
+    - name: Modify Export policy
+      netapp.ontap.na_ontap_volume:
+          state: present
+          name: "{{ volname }}"
+          vserver: "{{ vservername }}"
+          wait_for_completion: True
+          export_policy: "{{ export_policy_name }}"
+          <<: *prod_clusterlogin
+      when: Style == 'unix'
+    - name: Create Backup Volume
+      netapp.ontap.na_ontap_volume:
+          state: present
+          name: "{{ DR_volname }}"
+          aggregate_name: "{{ DR_aggrname }}"
+          size: "{{ DR_size }}"
+          size_unit: gb
+          vserver: "{{ SVM_Peer.DR_SVM }}"
+          wait_for_completion: True
+          space_guarantee: none
+          type: DP
+          language: "{{ Language }}"
+          <<: *dr_clusterlogin
+    - name: Create Snapmirror
+      netapp.ontap.na_ontap_snapmirror:
+          state: present
+          source_endpoint:
+            path: "{{ SVM_Peer.Prd_Local_Name + ':' + volname }}"
+          destination_endpoint:
+            path: "{{ SVM_Peer.DR_SVM + ':' + DR_volname }}"
+          schedule: "{{ cron | default(omit)  }}"
+          #schedule: "{{ cron }}"
+          policy: "{{ SMPolicy }}"
+          <<: *dr_clusterlogin
+    - name: Mount Backup Volume
+      netapp.ontap.na_ontap_volume:
+          state: present
+          name: "{{ DR_volname }}"
+          vserver: "{{ SVM_Peer.DR_SVM }}"
+          <<: *dr_clusterlogin
+          junction_path: "/{{ DR_volname }}"
+      when: DR_Share is defined and DR_Share
+    - name: Create Backup Volume Share
+      netapp.ontap.na_ontap_cifs:
+        state: present
+        name: "{{ DR_ShareName }}"
+        path: "/{{ DR_volname }}"
+        vserver: "{{ SVM_Peer.DR_SVM }}"
+        share_properties: "{{ share_properties_base + (['show_previous_versions'] if DR_ShareProperties == 'Yes' else []) }}"
+        <<: *dr_clusterlogin
+      when: DR_Share is defined and DR_Share

@@ -1,0 +1,106 @@
+name: Create Clone Volumes
+type: ansible
+playbook: createclonevolume.yml
+description: This workflow will Let you Create Clone Volumes
+roles:
+  - public
+categories:
+  - Cenitex Playbooks
+tileClass: has-background-info-light
+icon: hard-drive
+fields:
+  - name: aiqumserver
+    type: enum
+    label: AIQUM Server
+    values:
+      - IP: 192.168.0.71
+        Location: T2
+      - IP: 192.168.0.72
+        Location: T4
+    group: Volume Management
+  - name: ProdCluster
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(aiqumserver)/api/datacenter/cluster/clusters','','AIQUM','[.records[]]')
+    label: Cluster Name
+    default: __auto__
+    columns:
+      - name
+      - management_ip
+      - location
+    outputObject: false
+    previewColumn: management_ip
+    valueColumn: management_ip
+    group: Volume Management
+  - name: ONTAP_cred
+    type: expression
+    expression: "'$(ProdCluster.name)'"
+    label: ONTAP Creds
+    runLocal: true
+    default: __auto__
+    asCredential: true
+    hide: true
+    group: Volume Management
+  - name: vservername
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/svm/svms?order_by=name','','$(ProdCluster.name)','[.records[]]')
+    label: Parent SVM Name
+    columns:
+      - name
+    valueColumn: name
+    group: Volume Management
+  - name: Volume
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/storage/volumes?svm=$(vservername.name)&order_by=name','','$(ProdCluster.name)','[.records[]
+      | {"Name":.name}]')
+    columns:
+      - Name
+    valueColumn: Name
+    previewColumn: Name
+    label: Parent Volume Name
+    group: Volume Management
+  - name: snapsh
+    type: enum
+    values:
+      - Create New
+      - Use Existing
+    label: Snapshot(New/Existing)
+    group: Volume Management
+  - name: listsnaps
+    type: enum
+    label: Snapshot Name
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/private/cli/snap?volume=$(Volume)&vserver=$(vservername.name)&fields=create-time,size','','$(ProdCluster.name)','[.records[]
+      | {"Name":.snapshot, "Create Time":.create_time, "size(KB)":.size | fn2KB
+      }]')
+    group: Volume Management
+    columns:
+      - Name
+      - Create Time
+      - size(KB)
+    valueColumn: Name
+    previewColumn: Name
+    dependencies:
+      - name: snapsh
+        values:
+          - Use Existing
+  - name: createsnap
+    type: text
+    group: Volume Management
+    dependencies:
+      - name: snapsh
+        values:
+          - Create New
+    label: Snapshot Name
+  - name: clvserver
+    type: enum
+    label: Clone Volume SVM
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/svm/svms?order_by=name','','$(ProdCluster.name)','[.records[]]')
+    columns:
+      - name
+    valueColumn: name
+    group: Volume Management
+  - name: clvolume
+    type: text
+    label: Clone Volume Name
+    default: clone_$(Volume)
+    group: Volume Management
+source: createclonevolume.yml

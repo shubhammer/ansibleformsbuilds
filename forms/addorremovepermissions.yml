@@ -1,0 +1,123 @@
+name: Add or Remove ACL's
+type: ansible
+playbook: addorremoveacl.yml
+description: This workflow will Let you add or remove ACL's on an existing Share.
+roles:
+  - public
+categories:
+  - Cenitex Playbooks
+tileClass: has-background-info-light
+icon: hard-drive
+fields:
+  - type: radio
+    name: acljob
+    label: Do You Want To??
+    values:
+      - Add ACL
+      - Remove ACL
+    required: true
+  - name: aiqumserver
+    type: enum
+    label: AIQUM Server
+    values:
+      - IP: 192.168.0.71
+        Location: T2
+      - IP: 192.168.0.72
+        Location: T4
+    group: Permissions Management
+  - name: ProdCluster
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(aiqumserver)/api/datacenter/cluster/clusters','','AIQUM','[.records[]]')
+    label: Cluster Name
+    default: __auto__
+    columns:
+      - name
+      - management_ip
+      - location
+    outputObject: false
+    previewColumn: management_ip
+    valueColumn: management_ip
+    group: Permissions Management
+  - name: ONTAP_cred
+    type: expression
+    expression: "'$(ProdCluster.name)'"
+    label: ONTAP Creds
+    runLocal: true
+    default: __auto__
+    asCredential: true
+    hide: true
+    group: Permissions Management
+  - name: vservername
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/svm/svms?order_by=name','','$(ProdCluster.name)','[.records[]]')
+    label: SVM Name
+    columns:
+      - name
+    valueColumn: name
+    group: Permissions Management
+  - name: Volume
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/storage/volumes?svm=$(vservername.name)&order_by=name','','$(ProdCluster.name)','[.records[]
+      | {"Name":.name}]')
+    columns:
+      - Name
+    valueColumn: Name
+    previewColumn: Name
+    group: Permissions Management
+  - name: Share
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/protocols/cifs/shares?svm=$(vservername.name)&volume.name=$(Volume)&fields=name,path,acls&order_by=name','','$(ProdCluster.name)','[.records[]
+      | {"Name":.name ,"Path":.path} ]')
+    columns:
+      - Name
+      - Path
+    label: Share Name
+    valueColumn: Name
+    previewColumn: Name
+    group: Permissions Management
+  - name: acl
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/protocols/cifs/shares?svm=$(vservername.name)&volume.name=$(Volume)&name=$(Share)&fields=name,path,acls&order_by=name','','$(ProdCluster.name)','[.records[].acls[]
+      | {"User or Group":.user_or_group,"Type":.type,"Permission":.permission}
+      ]')
+    columns:
+      - User or Group
+      - Permission
+      - Type
+    label: ACL Details
+    valueColumn: "*"
+    previewColumn: User or Group
+    dependencies:
+      - name: acljob
+        values:
+          - Remove ACL
+    group: Permissions Management
+    multiple: true
+  - name: addacl
+    type: table
+    label: Provide ACL Details
+    tableFields:
+      - name: usergroup
+        type: text
+        label: User/Group
+      - name: Permission
+        type: enum
+        label: Permission
+        values:
+          - read
+          - change
+          - no_access
+          - full_control
+      - name: type
+        label: type
+        type: enum
+        values:
+          - windows
+          - unix_user
+          - unix_group
+    dependencies:
+      - name: acljob
+        values:
+          - Add ACL
+    group: Permissions Management
+source: addorremovepermissions.yml

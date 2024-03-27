@@ -1,0 +1,19 @@
+---
+- name: Set max autosize based on volume size
+  hosts: localhost
+  tasks:
+    - name: Determine maximum autosize
+      set_fact:
+        maximum_size: >-
+          {% if size > 50000 %}  
+          100TB
+          {% elif size > 25000 %}  
+          60TB
+          {% elif size > 10000 %}  
+          40TB
+          {% else %} 
+          25TB
+          {% endif %}
+    - name: Print maximum autosize
+      debug:
+        msg: "The maximum autosize is set to {{ maximum_size }}"

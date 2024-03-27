@@ -1,0 +1,53 @@
+---
+- hosts: localhost
+  gather_facts: false
+  collections:
+    - netapp.ontap
+  vars:
+    share_properties_base: ['oplocks', 'browsable', 'changenotify']
+    dr_clusterlogin: &dr_clusterlogin
+      hostname: "{{ BackupCluster }}"
+      username: "{{ backup_cred.user }}"
+      password: "{{ backup_cred.password }}"
+      https: true
+      validate_certs: no
+  tasks:    
+    - name: Create Backup Volume
+      netapp.ontap.na_ontap_volume:
+          state: present
+          name: "{{ DR_volname }}"
+          aggregate_name: "{{ DR_aggrname }}"
+          size: "{{ DR_size }}"
+          size_unit: gb
+          vserver: "{{ backupvservername }}"
+          wait_for_completion: True
+          space_guarantee: none
+          type: DP
+          <<: *dr_clusterlogin
+    - name: Create Snapmirror
+      netapp.ontap.na_ontap_snapmirror:
+          state: present
+          source_volume: "{{ ProdVolume }}"
+          destination_volume: "{{ DR_volname }}"
+          source_vserver: "{{ ProdVserver }}"
+          destination_vserver: "{{ backupvservername }}"
+          schedule: "{{ cron }}"
+          policy: "{{ SMPolicy }}"
+          <<: *dr_clusterlogin
+    - name: Mount Backup Volume
+      netapp.ontap.na_ontap_volume:
+          state: present
+          name: "{{ DR_volname }}"
+          vserver: "{{ backupvservername }}"
+          <<: *dr_clusterlogin
+          junction_path: "/{{ DR_volname }}"
+      when: DR_Share is defined and DR_Share
+    - name: Create Backup Volume Share
+      netapp.ontap.na_ontap_cifs:
+        state: present
+        name: "{{ DR_ShareName }}"
+        path: "/{{ DR_volname }}"
+        vserver: "{{ backupvservername }}"
+        share_properties: "{{ share_properties_base + (['show_previous_versions'] if DR_ShareProperties == 'Yes' else []) }}"
+        <<: *dr_clusterlogin
+      when: DR_Share is defined and DR_Share

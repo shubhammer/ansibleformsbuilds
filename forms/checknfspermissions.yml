@@ -1,0 +1,51 @@
+name: Check NFS Permissions
+type: ansible
+playbook: getnfsdetails.yml
+description: This workflow will help providing NFS Details about an existing volume
+roles:
+  - public
+categories:
+  - Cenitex Playbooks
+tileClass: has-background-info-light
+icon: hard-drive
+fields:
+  - name: ProdCluster
+    type: enum
+    expression: fn.fnRestBasic('get','https://192.168.0.71/api/datacenter/cluster/clusters','','AIQUM','[.records[]]')
+    label: Cluster Name
+    default: __auto__
+    columns:
+      - name
+      - management_ip
+      - location
+    outputObject: false
+    previewColumn: management_ip
+    valueColumn: management_ip
+    group: NFS details
+  - name: ONTAP_cred
+    type: expression
+    expression: "'$(ProdCluster.name)'"
+    label: ONTAP Creds
+    runLocal: true
+    default: __auto__
+    asCredential: true
+    hide: true
+    group: NFS details
+  - name: vservername
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/svm/svms?order_by=name','','$(ProdCluster.name)','[.records[]]')
+    label: SVM Name
+    columns:
+      - name
+    valueColumn: name
+    group: NFS details
+  - name: Volume
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/storage/volumes?svm=$(vservername.name)&order_by=name','','$(ProdCluster.name)','[.records[]
+      | {"Name":.name}]')
+    columns:
+      - Name
+    valueColumn: Name
+    previewColumn: Name
+    group: NFS details
+source: checknfspermissions.yml

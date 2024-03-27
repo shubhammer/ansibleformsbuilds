@@ -1,0 +1,52 @@
+---
+- hosts: localhost
+  gather_facts: false
+  collections:
+    - netapp.ontap
+  vars:
+    share_properties_base: ['oplocks', 'browsable', 'changenotify']
+    prod_clusterlogin: &prod_clusterlogin
+      hostname: "{{ ProdCluster }}"
+      username: "{{ ONTAP_cred.user }}"
+      password: "{{ ONTAP_cred.password }}"
+      https: true
+      validate_certs: no
+  tasks:
+    - name: create qtree
+      netapp.ontap.na_ontap_qtree:
+        state: present
+        name: "{{ qtreename }}"
+        flexvol_name: "{{ All_volumes }}"
+        security_style: ntfs
+        vserver: "{{ vservername }}"
+        <<: *prod_clusterlogin
+      when: qtree == 'Yes' and qtree
+    - name: Create Production Share  
+      netapp.ontap.na_ontap_cifs:
+        state: present
+        name: "{{ prod_ShareName }}"
+        path: "{{  Share_Path }}"
+        vserver: "{{ vservername }}"
+        share_properties: "{{ share_properties_base + (['show_previous_versions'] if prod_ShareProperties == 'Yes' else []) }}"
+        <<: *prod_clusterlogin
+    - name: Add Custom ACL
+      netapp.ontap.na_ontap_cifs_acl:
+          state: present
+          share_name: "{{ prod_ShareName }}"
+          user_or_group: "{{ item.usergroup }}"
+          type: "{{ item.type }}"
+          permission: "{{ item.Permission }}"
+          vserver: "{{ vservername }}"
+          <<: *prod_clusterlogin
+      when: customacl == 'Yes' and customacl
+      loop: "{{ addacl }}"
+    - name: Remove Everyone ACL
+      netapp.ontap.na_ontap_cifs_acl:
+          state: absent    
+          vserver: "{{ vservername }}"
+          user_or_group: Everyone 
+          permission: "full_control"
+          share_name: "{{ prod_ShareName }}"
+          <<: *prod_clusterlogin
+      when: removeeveryone == 'Yes' and removeeveryone is defined 
+      

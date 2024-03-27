@@ -1,0 +1,31 @@
+---
+- hosts: localhost
+  gather_facts: false
+  collections:
+    - netapp.ontap
+  vars:
+    prod_clusterlogin: &prod_clusterlogin
+      hostname: "{{ ProdCluster }}"
+      username: "{{ ONTAP_cred.user }}"
+      password: "{{ ONTAP_cred.password }}"
+      https: true
+      validate_certs: no
+  tasks:
+    - name: Add Show Snapshot Property
+      netapp.ontap.na_ontap_cifs:
+          state: present
+          name: "{{ Share_name }}"
+          show_snapshot: true
+          vserver: "{{ vservername }}"
+          <<: *prod_clusterlogin
+      when: sharejob == 'Add Show-Snapshot Property'
+    - name: Remove Show Snapshot Property
+      netapp.ontap.na_ontap_cifs:
+          state: present
+          name: "{{ Share_nosnap }}"
+          show_snapshot: false
+          vserver: "{{ vservername }}"
+          <<: *prod_clusterlogin        
+      when: sharejob == 'Remove Show-Snapshot Property'
+    
+    

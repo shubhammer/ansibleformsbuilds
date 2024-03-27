@@ -1,0 +1,133 @@
+name: Create NetApp Share
+type: ansible
+playbook: newshare.yaml
+description: This workflow will Create a NetApp Share on an Existing Volume
+roles:
+  - public
+categories:
+  - Cenitex Playbooks
+tileClass: has-background-info-light
+icon: hard-drive
+fields:
+  - name: ProdCluster
+    type: enum
+    expression: fn.fnRestBasic('get','https://192.168.0.71/api/datacenter/cluster/clusters','','AIQUM','[.records[]]')
+    label: Cluster Name
+    default: __auto__
+    columns:
+      - name
+      - management_ip
+      - location
+    outputObject: false
+    previewColumn: management_ip
+    valueColumn: management_ip
+    group: Share Provisioning
+  - name: ONTAP_cred
+    type: expression
+    expression: "'$(ProdCluster.name)'"
+    label: ONTAP Creds
+    runLocal: true
+    default: __auto__
+    asCredential: true
+    hide: true
+    group: Share Provisioning
+  - name: vservername
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/svm/svms?order_by=name','','$(ProdCluster.name)','[.records[]]')
+    label: SVM Name
+    columns:
+      - name
+    valueColumn: name
+    group: Share Provisioning
+  - name: All_volumes
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/storage/volumes?svm=$(vservername.name)&order_by=name','','$(ProdCluster.name)','[.records[]
+      | {"Name":.name}]')
+    columns:
+      - Name
+    valueColumn: Name
+    previewColumn: Name
+    label: Volume Name
+    group: Share Provisioning
+  - name: qtree
+    type: enum
+    values:
+      - Yes
+      - No
+    label: Do you Need a New Qtree ?
+    group: Share Provisioning
+  - name: qtreename
+    type: text
+    label: Qtree Name
+    group: Share Provisioning
+    dependencies:
+      - name: qtree
+        values:
+          - Yes
+  - name: Share_Path
+    type: text
+    group: Share Provisioning
+    default: /$(All_volumes)/$(qtreename)
+  - name: prod_ShareName
+    type: text
+    label: Share Name
+    line: line3
+    group: Share Provisioning
+    default: $(qtreename)
+  - name: prod_ShareProperties
+    type: enum
+    label: Share Show-Snapshot Property
+    line: line3
+    default: No
+    values:
+      - Yes
+      - No
+    group: Share Provisioning
+  - name: customacl
+    label: Do You Need Custom ACL
+    type: enum
+    values:
+      - Yes
+      - No
+    group: Share Provisioning
+    help: Default Everyone Full Control Will be there please remove that ACL if not
+      needed.
+  - name: addacl
+    type: table
+    label: Provide ACL Details
+    tableFields:
+      - name: usergroup
+        type: text
+        label: User/Group
+      - name: Permission
+        type: enum
+        label: Permission
+        values:
+          - read
+          - change
+          - no_access
+          - full_control
+      - name: type
+        label: type
+        type: enum
+        values:
+          - windows
+          - unix_user
+          - unix_group
+    dependencies:
+      - name: customacl
+        values:
+          - Yes
+    group: Share Provisioning
+  - name: removeeveryone
+    label: Remove Everyone / Full Control Permissions
+    type: enum
+    values:
+      - Yes
+      - No
+    group: Share Provisioning
+    dependencies:
+      - name: customacl
+        values:
+          - Yes
+source: Create Share.yml

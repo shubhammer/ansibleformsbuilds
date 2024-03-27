@@ -1,0 +1,377 @@
+name: Create NetApp Volume and Backup
+type: ansible
+playbook: createvolumeandsnapmirror.yml
+description: This workflow will kickoff creation of NetApp Volums(CIFS/NFS) and
+  Backup Volume with snapmirror Configuration.
+roles:
+  - public
+categories:
+  - Cenitex Playbooks
+tileClass: has-background-info-light
+icon: hard-drive
+fields:
+  - name: Prod_aiqumserver
+    type: enum
+    label: Production AIQUM Server
+    values:
+      - IP: 192.168.0.71
+        Name: nmscenme1aum02
+        Environment: T2
+      - IP: 192.168.0.102
+        Name: nmscenme1aum01
+        Environment: T4
+    group: Storage Provisioning
+  - name: ProdCluster
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(Prod_aiqumserver)/api/datacenter/cluster/clusters','','AIQUM','[.records[]]')
+    label: Cluster Name
+    default: __auto__
+    columns:
+      - name
+      - management_ip
+      - location
+    outputObject: false
+    previewColumn: management_ip
+    valueColumn: management_ip
+    group: Storage Provisioning
+  - name: ONTAP_cred
+    type: expression
+    expression: "'$(ProdCluster.name)'"
+    label: ONTAP Creds
+    runLocal: true
+    default: __auto__
+    asCredential: true
+    hide: true
+    group: Storage Provisioning
+  - name: vservername
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/svm/svms?order_by=name','','$(ProdCluster.name)','[.records[]]')
+    label: SVM Name
+    columns:
+      - name
+    valueColumn: name
+    group: Storage Provisioning
+  - name: aggrname
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/storage/aggregates?fields=*&order_by=name','','$(ProdCluster.name)','[.records[]|
+      {"Name":.name, "Size(GB)":.space.block_storage.size | fn2GB | round,
+      "available(GB)":.space.block_storage.available | fn2GB | round, "used
+      %":.space.block_storage.used_percent}]' )
+    label: Aggregate Name
+    valueColumn: Name
+    previewColumn: Name
+    group: Storage Provisioning
+  - name: All_volumes
+    type: expression
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/storage/volumes?svm=$(vservername.name)&order_by=name','','$(ProdCluster.name)','[.records[]
+      | {"Name":.name}]')
+    columns:
+      - Name
+    valueColumn: Name
+    previewColumn: Name
+    hide: true
+  - name: Find_Volumes
+    type: expression
+    expression: fnArray.from($(All_volumes)).some(volume =>
+      volume.Name.toLowerCase() === "$(volname)".toLowerCase())
+    runLocal: true
+    hide: true
+  - name: volname
+    type: text
+    label: Volume Name
+    line: line1
+    validIfNot:
+      field: Find_Volumes
+      description: Volume Name Already Exist
+    group: Storage Provisioning
+  - name: size
+    type: number
+    label: Size(in GB)
+    line: line1
+    group: Storage Provisioning
+  - name: Style
+    label: Volume Security Style
+    type: enum
+    values:
+      - unix
+      - ntfs
+    line: line1
+    group: Storage Provisioning
+  - name: Type
+    label: Volume Type
+    type: enum
+    values:
+      - RW
+      - DP
+    default: RW
+    line: line2
+    group: Storage Provisioning
+  - name: Language
+    label: Volume Language
+    type: enum
+    default: c.UTF-8
+    values:
+      - c
+      - c.UTF-8
+      - en_us
+    line: line2
+    group: Storage Provisioning
+  - name: Junction_path
+    label: Junction Path
+    type: text
+    default: /$(volname)
+    line: line2
+    group: Storage Provisioning
+  - name: exportpolicy
+    label: Export Policy
+    type: enum
+    values:
+      - Create New
+      - Use Existing
+    dependencies:
+      - name: Style
+        values:
+          - unix
+    line: line2
+    group: Storage Provisioning
+  - name: prod_ShareName
+    type: text
+    label: Share Name
+    default: $(volname)
+    line: line3
+    dependencies:
+      - name: Style
+        values:
+          - ntfs
+    group: Storage Provisioning
+  - name: prod_ShareProperties
+    type: enum
+    label: Share Show-Snapshot Property
+    line: line3
+    default: No
+    values:
+      - Yes
+      - No
+    dependencies:
+      - name: Style
+        values:
+          - ntfs
+    group: Storage Provisioning
+  - name: export
+    type: table
+    label: Provide NFS export details
+    dependencies:
+      - name: Style
+        values:
+          - unix
+      - name: exportpolicy
+        values:
+          - Create New
+    tableFields:
+      - name: clientmatch
+        type: text
+        label: clientmatch
+      - name: Protocol
+        type: enum
+        label: Protocol
+        values:
+          - nfs3
+          - nfs4
+          - cifs
+          - any
+      - name: rorule
+        type: enum
+        label: rorule
+        values:
+          - any
+          - krb5
+          - none
+          - ntlm
+      - name: rwrule
+        type: enum
+        label: rwrule
+        values:
+          - any
+          - krb5
+          - none
+          - ntlm
+      - name: superuser
+        type: enum
+        label: superuser
+        values:
+          - any
+          - krb5
+          - none
+          - ntlm
+    group: Storage Provisioning
+  - name: exportpolicyname
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/protocols/nfs/export-policies?order_by=name&svm.name=$(vservername.name)','','$(ProdCluster.name)','[.records[]]')
+    label: Export Policy Name
+    columns:
+      - name
+    valueColumn: name
+    group: Storage Provisioning
+    dependencies:
+      - name: Style
+        values:
+          - unix
+      - name: exportpolicy
+        values:
+          - Use Existing
+    line: line4
+  - name: exportpolicyrules
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/private/cli/export-policy/rule?vserver=$(vservername.name)&policyname=$(exportpolicyname.name)&fields=rorule,rwrule,superuser,policyname,protocol,clientmatch','','$(ProdCluster.name)','[.records[]
+      | {"Rule Index":.ruleindex,"Protocol":.protocol,"Client
+      Match":.clientmatch,"RO Rule":.rorule,"RW Rule":.rwrule,"Super
+      User":.superuser,"Policy Name":.policyname}]')
+    label: Export Policy Rules
+    columns:
+      - Rule Index
+      - Protocol
+      - Client Match
+      - RO Rule
+      - RW Rule
+      - Super User
+    valueColumn: Policy Name
+    previewColumn: Policy Name
+    default: __auto__
+    group: Storage Provisioning
+    dependencies:
+      - name: Style
+        values:
+          - unix
+      - name: exportpolicy
+        values:
+          - Use Existing
+    line: line4
+  - name: DR_aiqumserver
+    type: enum
+    label: Backup AIQUM Server
+    values:
+      - IP: 192.168.0.71
+        Environment: T2
+      - IP: 10.63.236.17
+        Name: nmscenme1aum01
+        Environment: T4
+    group: Backup Configuration
+  - name: BackupCluster
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(DR_aiqumserver)/api/datacenter/cluster/clusters?name=!$(ProdCluster.name)','','AIQUM','[.records[]]')
+    label: DR/Backup Cluster
+    default: __auto__
+    columns:
+      - name
+      - management_ip
+      - location
+    outputObject: false
+    previewColumn: management_ip
+    valueColumn: management_ip
+    group: Backup Configuration
+  - name: backup_cred
+    type: expression
+    expression: "'$(BackupCluster.name)'"
+    label: ONTAP Creds
+    runLocal: true
+    default: __auto__
+    asCredential: true
+    hide: true
+    group: Backup Configuration
+  - name: SVM_Peer
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(BackupCluster.management_ip)/api/svm/peers?peer.svm.name=$(vservername.name)&fields=*&peer.cluster.name=$(ProdCluster.name)','','$(BackupCluster.name)','[.records[]  |
+      {"DR_SVM":.svm.name,"Prd_Local_Name":.name}]')
+    label: Peer Vserver
+    columns:
+      - DR_SVM
+    valueColumn: "*"
+    group: Backup Configuration
+  - name: DR_aggrname
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(BackupCluster.management_ip)/api/storage/aggregates?fields=*&order_by=name','','$(BackupCluster.name)','[.records[]|
+      {"Name":.name, "Size(GB)":.space.block_storage.size | fn2GB | round,
+      "available(GB)":.space.block_storage.available | fn2GB | round, "used
+      %":.space.block_storage.used_percent}]' )
+    label: Backup Aggregate Name
+    valueColumn: Name
+    previewColumn: Name
+    group: Backup Configuration
+  - name: DR_All_volumes
+    type: expression
+    expression: fn.fnRestBasic('get','https://$(BackupCluster.management_ip)/api/storage/volumes?svm=$(SVM_Peer.name)&order_by=name','','$(BackupCluster.name)','[.records[]
+      | {"Name":.name}]')
+    columns:
+      - Name
+    valueColumn: Name
+    previewColumn: Name
+    hide: true
+  - name: DR_Find_Volumes
+    type: expression
+    expression: fnArray.from($(DR_All_volumes)).some(volume =>
+      volume.Name.toLowerCase() === "$(DR_volname)".toLowerCase())
+    runLocal: true
+    hide: true
+  - name: DR_volname
+    type: text
+    label: Backup Volume Name
+    default: sv_$(volname)
+    line: line5
+    validIfNot:
+      field: DR_Find_Volumes
+      description: Volume Name Already Exist
+    group: Backup Configuration
+  - name: DR_size
+    type: number
+    label: Size(in GB)
+    line: line5
+    group: Backup Configuration
+  - name: SMPolicy
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(BackupCluster.management_ip)/api/snapmirror/policies?order_by=name&fields=*','','$(BackupCluster.name)','[.records[]]')
+    label: Snapmirror Policy
+    columns:
+      - name
+      - type
+    valueColumn: name
+    line: line6
+    group: Backup Configuration
+  - name: cron
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(BackupCluster.management_ip)/api/cluster/schedules?order_by=name','','$(BackupCluster.name)','[.records[]]')
+    label: Schedule
+    columns:
+      - name
+    valueColumn: name
+    line: line6
+    group: Backup Configuration
+  - name: DR_Share
+    type: checkbox
+    label: Do you need Backup volume Share Created??
+    dependencies:
+      - name: Style
+        values:
+          - ntfs
+    group: Backup Share
+  - name: DR_ShareName
+    type: text
+    label: Backup Share Name
+    default: $(DR_volname)
+    dependencies:
+      - name: DR_Share
+        values:
+          - true
+    group: Backup Share
+  - name: DR_ShareProperties
+    type: enum
+    label: Backup Share Show-Snapshot Property
+    default: No
+    values:
+      - Yes
+      - No
+    dependencies:
+      - name: DR_Share
+        values:
+          - true
+    group: Backup Share
+source: createnetappvolumeandbackup.yaml

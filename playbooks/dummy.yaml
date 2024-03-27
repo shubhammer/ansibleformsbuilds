@@ -1,0 +1,7 @@
+---
+- name: This is a hello-world example
+  hosts: localhost
+  tasks:
+    - name: Print a message with a variable1
+      debug:
+        msg: "The value of the custom_variable is {{ Style }}"

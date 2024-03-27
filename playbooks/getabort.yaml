@@ -1,0 +1,28 @@
+---
+- hosts: localhost
+  name: NSW Transport Scheduled SVM Failover
+  gather_facts: false
+  vars:
+    source: &source_login
+      hostname: 192.168.0.101
+      username: admin
+      password: Netapp1!
+      https: true
+      validate_certs: false
+  collections:
+    - netapp.ontap
+  tasks:
+    - name: Get Source SM
+      netapp.ontap.na_ontap_rest_info:
+        <<: *source_login
+        gather_subset:
+            - vserver_info
+        use_python_keys: true
+        parameters:
+           name: svm1_cluster1
+        fields: 
+         - state
+      register: SM			
+    - name: Deubh SM
+      debug:
+        var: SM.ontap_info.svm_svms.records[0].state

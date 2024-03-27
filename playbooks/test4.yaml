@@ -1,0 +1,25 @@
+---
+- name: Set max autosize based on volume size
+  hosts: localhost
+  vars:
+    size_tb: "{{ (size | regex_replace('TB', '') | float) }}"
+  tasks:
+    - name: Determine maximum autosize
+      set_fact:
+        maximum_size: >-
+          {{ 
+            (size_tb > 50) | ternary(
+              '100TB',
+              (size_tb > 25) | ternary(
+                '60TB',
+                (size_tb > 10) | ternary(
+                  '40TB',
+                  '25TB'
+                )
+              )
+            )
+          }}
+    - name: Print maximum autosize
+      debug:
+        msg: "The maximum autosize is set to {{ maximum_size }}"
+

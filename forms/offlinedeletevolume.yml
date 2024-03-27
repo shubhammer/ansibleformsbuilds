@@ -1,0 +1,141 @@
+name: Offline/Delete NetApp Volume
+type: ansible
+playbook: offlinedeletevolume.yml
+description: This workflow will either Offline or Delete NetApp Volume
+roles:
+  - public
+categories:
+  - Cenitex Playbooks
+tileClass: has-background-info-light
+icon: hard-drive
+fields:
+  - type: radio
+    name: voljob
+    label: Do You Want To??
+    values:
+      - Offline Volume
+      - Delete Volume
+    required: true
+  - name: aiqumserver
+    type: enum
+    label: AIQUM Server
+    values:
+      - IP: 192.168.0.71
+        Location: T2
+      - IP: 192.168.0.72
+        Location: T4
+    group: Volume Management
+  - name: ProdCluster
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(aiqumserver)/api/datacenter/cluster/clusters','','AIQUM','[.records[]]')
+    label: Cluster Name
+    default: __auto__
+    columns:
+      - name
+      - management_ip
+      - location
+    outputObject: false
+    previewColumn: management_ip
+    valueColumn: management_ip
+    group: Volume Management
+  - name: ONTAP_cred
+    type: expression
+    expression: "'$(ProdCluster.name)'"
+    label: ONTAP Creds
+    runLocal: true
+    default: __auto__
+    asCredential: true
+    hide: true
+    group: Volume Management
+  - name: vservername
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/svm/svms?order_by=name','','$(ProdCluster.name)','[.records[]]')
+    label: SVM Name
+    columns:
+      - name
+    valueColumn: name
+    group: Volume Management
+  - name: All_volumes
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/storage/volumes?svm=$(vservername.name)&order_by=name','','$(ProdCluster.name)','[.records[]
+      | {"Name":.name}]')
+    columns:
+      - Name
+    valueColumn: Name
+    previewColumn: Name
+    label: Volume Name
+    group: Volume Management
+    validIfNot:
+      field: checkifvoloffline
+      description: Volume is Currently Online Please bring it offline Before deleting.
+  - name: volstate
+    type: expression
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/storage/volumes?svm=$(vservername.name)&name=$(All_volumes.name)&fields=state','','$(ProdCluster.name)','[.records[]
+      | {"state":.state}]')
+    default: __auto__
+    dependencies:
+      - name: voljob
+        values:
+          - Delete Volume
+  - name: checkifvoloffline
+    type: expression
+    expression: "'$(volstate[0].state)' === 'online'"
+    runLocal: true
+    dependencies:
+      - name: voljob
+        values:
+          - Delete Volume
+  - name: ispolicyused
+    type: expression
+    hide: true
+    label: ispolicyused
+    dependencies:
+      - name: voljob
+        values:
+          - Delete Volume
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/private/cli/volume?policy=$(policy)&volume=!$(All_volumes)&vserver=$(vservername.name)','','$(ProdCluster.name)','[.num_records]')
+  - name: Check_if_Policy_Is_Not_Used
+    type: expression
+    expression: $(ispolicyused[0]) === 0
+    runLocal: true
+    hide: true
+    dependencies:
+      - name: voljob
+        values:
+          - Delete Volume
+  - name: policy
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/storage/volumes?name=$(All_volumes)&svm=$(vservername.name)&fields=nas.export_policy.name','','$(ProdCluster.name)','[.records[]
+      | {"Name":.nas.export_policy.name}]')
+    columns:
+      - Name
+    previewColumn: Name
+    label: Associated Export Policy Name
+    default: __auto__
+    group: Volume Management
+    help: Delete Export Policy Section will only Pop Up if the associated Export
+      policy with this volume is not used with any other Volume
+    dependencies:
+      - name: voljob
+        values:
+          - Delete Volume
+  - name: Delete_Export_Policy
+    type: enum
+    values:
+      - Yes
+      - No
+    dependencies:
+      - name: Check_if_Policy_Is_Not_Used
+        values:
+          - true
+      - name: voljob
+        values:
+          - Delete Volume
+    group: Volume Management
+  - name: confirmation
+    type: checkbox
+    label: Confirmation
+    help: Are you sure for taking this action
+    required: true
+    group: Volume Management
+source: offlinedeletevolume.yml

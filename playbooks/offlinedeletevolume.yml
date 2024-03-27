@@ -1,0 +1,37 @@
+---
+- hosts: localhost
+  gather_facts: false
+  collections:
+    - netapp.ontap
+  vars:
+    prod_clusterlogin: &prod_clusterlogin
+      hostname: "{{ ProdCluster }}"
+      username: "{{ ONTAP_cred.user }}"
+      password: "{{ ONTAP_cred.password }}"
+      https: true
+      validate_certs: no
+  tasks:
+    - name: Offline Volume
+      netapp.ontap.na_ontap_volume:
+          state: present
+          is_online: False
+          name: "{{ All_volumes }}"
+          junction_path: ''
+          vserver: "{{ vservername }}"
+          <<: *prod_clusterlogin
+      when: voljob == 'Offline Volume'
+    - name: Delete Volume
+      netapp.ontap.na_ontap_volume:
+          state: absent
+          name: "{{ All_volumes }}"
+          vserver: "{{ vservername }}"
+          <<: *prod_clusterlogin
+      when: voljob == 'Delete Volume'
+    - name: Delete Export policy
+      na_ontap_export_policy:
+          state: absent
+          name: "{{ policy }}"
+          vserver: "{{ vservername }}"
+          <<: *prod_clusterlogin
+      when: voljob == 'Delete Volume' and (Delete_Export_Policy | default('No') == 'Yes')
+    

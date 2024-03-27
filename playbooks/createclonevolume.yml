@@ -1,0 +1,31 @@
+---
+- hosts: localhost
+  gather_facts: false
+  collections:
+    - netapp.ontap
+  vars:
+    prod_clusterlogin: &prod_clusterlogin
+      hostname: "{{ ProdCluster }}"
+      username: "{{ ONTAP_cred.user }}"
+      password: "{{ ONTAP_cred.password }}"
+      https: true
+      validate_certs: no
+  tasks:
+    - name: Create Snapshot
+      netapp.ontap.na_ontap_snapshot:
+          state: present
+          volume: "{{ Volume }}"         
+          vserver: "{{ vservername }}"
+          <<: *prod_clusterlogin
+          snapshot: "{{ createsnap }}"
+      when: snapsh == 'Create New'
+    - name: Create Clone Volume
+      netapp.ontap.na_ontap_volume_clone:
+          state: present
+          name: "{{ clvolume }}"
+          vserver: "{{ clvserver  }}"
+          parent_vserver: "{{ vservername }}"
+          parent_volume: "{{ Volume }}"
+          parent_snapshot: "{{ listsnaps | default(createsnap) }}"
+          <<: *prod_clusterlogin
+    

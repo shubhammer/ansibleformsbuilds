@@ -1,0 +1,26 @@
+---
+- name: Set max autosize based on volume size
+  hosts: localhost
+  vars:
+    size: "15TB"  # Replace with the variable passed to the playbook
+  tasks:
+     - name: Determine maximum autosize
+       set_fact:
+         size_float: "{{ size | regex_replace('TB', '') | float }}"
+  
+     - name: Set maximum autosize
+       set_fact:
+          maximum_size: >-
+            {% if size_float > 50 %}
+            100TB
+            {% elif size_float > 25 %}
+            60TB
+            {% elif size_float > 10 %}
+            40TB
+            {% else %}
+            25TB
+            {% endif %}
+
+     - name: Print maximum autosize
+       debug:
+        msg: "The maximum autosize is set to {{ maximum_size }}"

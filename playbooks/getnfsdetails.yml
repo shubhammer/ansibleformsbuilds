@@ -1,0 +1,53 @@
+- hosts: localhost
+  gather_facts: false
+  collections:
+    - netapp.ontap
+  vars:
+    prod_clusterlogin: &prod_clusterlogin
+      hostname: "{{ ProdCluster }}"
+      username: "{{ ONTAP_cred.user }}"
+      password: "{{ ONTAP_cred.password }}"
+      https: true
+      validate_certs: no
+  tasks:
+    - name: Get Volume Unix Permissions
+      netapp.ontap.na_ontap_rest_info:
+        <<: *prod_clusterlogin
+        gather_subset:
+          - storage/volumes
+        parameters:
+          name: "{{ Volume }}"
+          svm: "{{ vservername }}"
+        fields:
+          - nas.unix_permissions
+          - nas.export_policy.name
+        use_python_keys: true
+      register: volume_info
+    - name: Get Export policy Rules for each volume
+      netapp.ontap.na_ontap_rest_cli:
+        <<: *prod_clusterlogin
+        command: 'export-policy/rule?fields=ruleindex,clientmatch,rorule,rwrule,superuser'
+        params:
+          vserver: "{{ vservername }}"
+          policyname: "{{ volume_info.ontap_info.storage_volumes.records[0].nas.export_policy.name }}"
+        verb: 'GET'
+      register: rules_info
+    - name: Create a formatted string of volume and export policy rules
+      set_fact:
+        volume_info_pretty: |
+          Volume Information:
+          Volume Name: {{ volume_info.ontap_info.storage_volumes.records[0].name }}
+          Export Policy: {{ volume_info.ontap_info.storage_volumes.records[0].nas.export_policy.name }}
+          Unix Permissions: {{ volume_info.ontap_info.storage_volumes.records[0].nas.unix_permissions }}
+          Export Policy Rules:
+          {% for rule in rules_info.msg.records %}
+            - Rule Index: {{ rule.ruleindex }}
+              Client Match: {{ rule.clientmatch }}
+              RO Rule: {{ rule.rorule | join(', ') }}
+              RW Rule: {{ rule.rwrule | join(', ') }}
+              Superuser: {{ rule.superuser | join(', ') }}
+          {% endfor %}
+
+    - name: Print volume and export policy rules information
+      debug:
+        msg: "{{ volume_info_pretty }}"

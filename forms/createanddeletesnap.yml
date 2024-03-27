@@ -1,0 +1,93 @@
+name: Create and Delete Snapshot
+type: ansible
+playbook: createanddeletesnaps.yml
+description: This workflow will Let you create and delete Snapshots
+roles:
+  - public
+categories:
+  - Cenitex Playbooks
+tileClass: has-background-info-light
+icon: hard-drive
+fields:
+  - type: radio
+    name: snapjob
+    label: Do You Want To??
+    values:
+      - Create Snapshot
+      - Delete Snapshot
+    required: true
+  - name: aiqumserver
+    type: enum
+    label: AIQUM Server
+    values:
+      - IP: 192.168.0.71
+        Location: T2
+      - IP: 192.168.0.72
+        Location: T4
+    group: Snapshot Management
+  - name: ProdCluster
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(aiqumserver)/api/datacenter/cluster/clusters','','AIQUM','[.records[]]')
+    label: Cluster Name
+    default: __auto__
+    columns:
+      - name
+      - management_ip
+      - location
+    outputObject: false
+    previewColumn: management_ip
+    valueColumn: management_ip
+    group: Snapshot Management
+  - name: ONTAP_cred
+    type: expression
+    expression: "'$(ProdCluster.name)'"
+    label: ONTAP Creds
+    runLocal: true
+    default: __auto__
+    asCredential: true
+    hide: true
+    group: Snapshot Management
+  - name: vservername
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/svm/svms?order_by=name','','$(ProdCluster.name)','[.records[]]')
+    label: SVM Name
+    columns:
+      - name
+    valueColumn: name
+    group: Snapshot Management
+  - name: Volume
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/storage/volumes?svm=$(vservername.name)&order_by=name','','$(ProdCluster.name)','[.records[]
+      | {"Name":.name}]')
+    columns:
+      - Name
+    valueColumn: Name
+    previewColumn: Name
+    group: Snapshot Management
+  - name: snapname
+    type: text
+    label: Snapshot Name
+    group: Snapshot Management
+    dependencies:
+      - name: snapjob
+        values:
+          - Create Snapshot
+  - name: listsnaps
+    type: enum
+    label: Snapshot List
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/private/cli/snap?volume=$(Volume)&vserver=$(vservername.name)&fields=create-time,size','','$(ProdCluster.name)','[.records[]
+      | {"Name":.snapshot, "Create Time":.create_time, "size(KB)":.size | fn2KB
+      }]')
+    dependencies:
+      - name: snapjob
+        values:
+          - Delete Snapshot
+    multiple: true
+    group: Snapshot Management
+    columns:
+      - Name
+      - Create Time
+      - size(KB)
+    valueColumn: Name
+    previewColumn: Name
+source: createanddeletesnap.yml

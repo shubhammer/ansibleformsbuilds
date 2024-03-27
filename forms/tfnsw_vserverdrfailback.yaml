@@ -1,0 +1,73 @@
+name: SVM DR Failback
+type: ansible
+playbook: vserverdrfailback.yml
+description: This workflow will Let you do SVM DR Failback
+roles:
+  - public
+categories:
+  - Transport Playbooks
+tileClass: has-background-info-light
+icon: hard-drive
+fields:
+  - name: ProdCluster
+    type: enum
+    expression: fn.fnRestBasic('get','https://192.168.0.71/api/datacenter/cluster/clusters','','AIQUM','[.records[]]')
+    label: Prod Cluster Name
+    default: __auto__
+    columns:
+      - name
+      - management_ip
+      - location
+    outputObject: false
+    previewColumn: management_ip
+    valueColumn: management_ip
+    group: SVM DR Failback
+  - name: ONTAP_cred
+    type: expression
+    expression: "'$(ProdCluster.name)'"
+    label: ONTAP Creds
+    runLocal: true
+    default: __auto__
+    asCredential: true
+    hide: true
+    group: SVM DR Failback
+  - name: source_svm
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/svm/svms?order_by=name','','$(ProdCluster.name)','[.records[]]')
+    label: Prod SVM Name
+    columns:
+      - name
+    valueColumn: name
+    group: SVM DR Failback
+  - name: DRCluster
+    type: enum
+    expression: fn.fnRestBasic('get','https://192.168.0.71/api/datacenter/cluster/clusters?name=!$(ProdCluster.name)','','AIQUM','[.records[]]')
+    label: DR Cluster Name
+    default: __auto__
+    columns:
+      - name
+      - management_ip
+      - location
+    outputObject: false
+    previewColumn: management_ip
+    valueColumn: management_ip
+    group: SVM DR Failback
+  - name: DR_ONTAP_cred
+    type: expression
+    expression: "'$(DRCluster.name)'"
+    label: DR Creds
+    runLocal: true
+    default: __auto__
+    asCredential: true
+    hide: true
+    group: SVM DR Failback
+  - name: destination_svm
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/svm/peers?fields=*&svm.name=$(source_svm.name)','','$(ProdCluster.name)','[.records[]]')
+    label: DR SVM Name
+    columns:
+      - name
+    valueColumn: name
+    default: __auto__
+    group: SVM DR Failback
+source: tfnsw_vserverdrfailback.yaml

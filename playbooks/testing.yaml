@@ -1,0 +1,15 @@
+---
+- hosts: localhost
+  gather_facts: false
+  collections:
+    - netapp.ontap
+  tasks:
+  - name: debug ip
+    debug: 
+      msg: "vm_ipv4_addr is {{ vm_ipv4_addr }}"
+  - name: debug dns
+    debug: 
+      msg: "vm_dns1_addr is {{ vm_dns1_addr }}"
+  - name: debug domain
+    debug: 
+      msg: "vm_domain_name is {{ vm_domain1_name }}"

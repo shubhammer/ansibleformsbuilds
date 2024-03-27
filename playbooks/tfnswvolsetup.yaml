@@ -1,0 +1,167 @@
+---
+- hosts: localhost
+  gather_facts: false
+  collections:
+    - netapp.ontap
+  vars:
+    prod_clusterlogin: &prod_clusterlogin
+      hostname: "{{ ProdCluster }}"
+      username: "{{ ONTAP_cred.user }}"
+      password: "{{ ONTAP_cred.password }}"
+      https: true
+      validate_certs: no
+    sdcbackup_clusterlogin: &sdcbackup_clusterlogin
+      username: "{{ SDCBackup_cred.user }}"
+      password: "{{ SDCBackup_cred.password }}"
+      https: true
+      validate_certs: no
+    udcbackup_clusterlogin: &udcbackup_clusterlogin
+      username: "{{ UDCBackup_cred.user }}"
+      password: "{{ UDCBackup_cred.password }}"
+      https: true
+      validate_certs: no
+  tasks:
+    - name: Create Production Cluster Volume
+      netapp.ontap.na_ontap_volume:
+          state: present
+          name: "{{ volname }}"
+          aggregate_name: "{{ aggrname }}"
+          size: "{{ size }}"
+          size_unit: gb
+          vserver: "{{ vservername }}"
+          wait_for_completion: True
+          space_guarantee: none
+          snapshot_policy: "{{ snappolicy }}"
+          language: "{{ Language }}"
+          junction_path: "{{ Junction_path }}"
+          #vserver_dr_protection: "{{ 'protected' if NeedDR == 'Yes' else 'unprotected' }}"
+          volume_security_style: "{{ Style }}"
+          encrypt: "{{ Encryption }}"
+          <<: *prod_clusterlogin
+    - name: Determine maximum autosize
+      set_fact:
+        maximum_size: >-
+          {% if size > 50000 %}  
+          100000
+          {% elif size > 25000 %}  
+          60000
+          {% elif size > 10000 %}  
+          40000
+          {% else %} 
+          25000
+          {% endif %}
+    - name: Configure AutoGrow Settings
+      netapp.ontap.na_ontap_volume_autosize:
+          <<: *prod_clusterlogin
+          mode: grow_shrink
+          grow_threshold_percent: 85
+          maximum_size: "{{ maximum_size | int }}g"
+          vserver: "{{ vservername }}"
+          volume: "{{ volname }}"
+    - name: Create Production Share  
+      netapp.ontap.na_ontap_cifs:
+        state: present
+        name: "{{ prod_ShareName }}"
+        path: "{{  Junction_path }}"
+        vserver: "{{ vservername }}"
+        share_properties: oplocks,browsable,changenotify,show_previous_versions
+        <<: *prod_clusterlogin
+      when: Style == 'ntfs'
+    - name: Add Custom ACL
+      netapp.ontap.na_ontap_cifs_acl:
+          state: present
+          share_name: "{{ prod_ShareName }}"
+          user_or_group: "{{ item.usergroup }}"
+          type: "{{ item.type }}"
+          permission: "{{ item.Permission }}"
+          vserver: "{{ vservername }}"
+          <<: *prod_clusterlogin
+      when: customacl == 'Yes' and customacl is defined
+      loop: "{{ addacl }}"
+    - name: Remove Everyone ACL
+      netapp.ontap.na_ontap_cifs_acl:
+          state: absent    
+          vserver: "{{ vservername }}"
+          user_or_group: Everyone 
+          permission: "full_control"
+          share_name: "{{ prod_ShareName }}"
+          <<: *prod_clusterlogin
+      when: removeeveryone == 'Yes' and removeeveryone is defined 
+    - name: Create Production Export Policy
+      na_ontap_export_policy:
+          state: present
+          name: "{{ vservername }}_{{ volname }}_IP"
+          vserver: "{{ vservername }}"
+          <<: *prod_clusterlogin
+      when: Style == 'unix' and exportpolicy == 'Create New'
+      register: export_policy_creation_result
+    - name: Create Export Policy Rules
+      na_ontap_export_policy_rule:
+        state: present
+        name: "{{ vservername }}_{{ volname }}_IP"
+        vserver: "{{ vservername }}"
+        client_match: "{{ item.clientmatch }}"
+        ro_rule: "{{ item.rorule }}"
+        rw_rule: "{{ item.rwrule }}"
+        super_user_security: "{{ item.superuser }}"
+        protocol: "{{ item.Protocol }}"
+        <<: *prod_clusterlogin
+      loop: "{{ export }}"
+      when: Style == 'unix' and exportpolicy == 'Create New'
+    - name: Set fact for export policy creation
+      set_fact:
+        export_policy_created: true
+      when: export_policy_creation_result is changed
+    - name: Set export policy name based on condition
+      set_fact:
+        export_policy_name: "{{ vservername }}_{{ volname }}_IP"
+      when: export_policy_created | default(false) | bool and Style == 'unix'
+    - name: Set alternative export policy name if condition not met
+      set_fact:
+        export_policy_name: "{{ exportpolicyname }}"
+      when: not (export_policy_created | default(false) | bool) and Style == 'unix'
+    - name: Modify Export policy
+      netapp.ontap.na_ontap_volume:
+          state: present
+          name: "{{ volname }}"
+          vserver: "{{ vservername }}"
+          wait_for_completion: True
+          export_policy: "{{ export_policy_name }}"
+          <<: *prod_clusterlogin
+      when: Style == 'unix'
+    - name: Create SDC Backup Volume
+      netapp.ontap.na_ontap_volume:
+          state: present
+          name: "{{ volname }}"
+          aggregate_name: "{{ SDCBackupAggregate }}"
+          size: "{{ size }}"
+          size_unit: gb
+          vserver: "{{ BackupVserver.DR_SVM }}"
+          wait_for_completion: True
+          space_guarantee: none
+          type: DP
+          language: "{{ Language }}"
+          <<: *sdcbackup_clusterlogin
+          hostname: "{{ BackupCluster }}"
+      when: NeedBackup == 'Yes'
+    - name: create SDC Snapmirror Relationship
+      netapp.ontap.na_ontap_snapmirror:
+          state: present
+          source_endpoint:
+            path: "{{ vservername + ':' + volname }}"
+          destination_endpoint:
+            path: "{{ BackupVserver.DR_SVM + ':' + volname }}"
+          schedule: "{{ cron | default(omit)  }}"
+          policy: "{{ SMPolicy }}"
+          <<: *sdcbackup_clusterlogin
+          hostname: "{{ BackupCluster }}"
+      when: NeedBackup == 'Yes'
+    - name: Mount SDC Backup Volume
+      netapp.ontap.na_ontap_volume:
+          state: present
+          name: "{{ volname }}"
+          junction_path : "/{{ volname }}"
+          vserver: "{{ BackupVserver.DR_SVM }}"
+          <<: *sdcbackup_clusterlogin
+          hostname: "{{ BackupCluster }}"
+      when: NeedBackup == 'Yes'

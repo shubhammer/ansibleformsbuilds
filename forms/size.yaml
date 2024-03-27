@@ -1,0 +1,15 @@
+name: size
+type: ansible
+playbook: size.yml
+description: size
+roles:
+  - public
+categories:
+  - Cenitex Playbooks
+tileClass: has-background-info-light
+icon: hard-drive
+fields:
+  - name: size
+    type: number
+    label: Size(in GB)
+    line: line1

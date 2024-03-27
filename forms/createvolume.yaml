@@ -1,0 +1,237 @@
+name: Create NetApp Volume
+type: ansible
+playbook: createvolume.yml
+description: This workflow will kickoff creation of NetApp Volums(CIFS/NFS)
+roles:
+  - public
+categories:
+  - Cenitex Playbooks
+tileClass: has-background-info-light
+icon: hard-drive
+fields:
+  - name: ProdCluster
+    type: enum
+    expression: fn.fnRestBasic('get','https://192.168.0.71/api/datacenter/cluster/clusters','','AIQUM','[.records[]]')
+    label: Cluster Name
+    default: __auto__
+    columns:
+      - name
+      - management_ip
+      - location
+    outputObject: false
+    previewColumn: management_ip
+    valueColumn: management_ip
+    group: Storage Provisioning
+  - name: ONTAP_cred
+    type: expression
+    expression: "'$(ProdCluster.name)'"
+    label: ONTAP Creds
+    runLocal: true
+    default: __auto__
+    asCredential: true
+    hide: true
+    group: Storage Provisioning
+  - name: vservername
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/svm/svms?order_by=name','','$(ProdCluster.name)','[.records[]]')
+    label: SVM Name
+    columns:
+      - name
+    valueColumn: name
+    group: Storage Provisioning
+  - name: aggrname
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/storage/aggregates?fields=*&order_by=name','','$(ProdCluster.name)','[.records[]|
+      {"Name":.name, "Size(GB)":.space.block_storage.size | fn2GB | round,
+      "available(GB)":.space.block_storage.available | fn2GB | round, "used
+      %":.space.block_storage.used_percent}]' )
+    label: Aggregate Name
+    valueColumn: Name
+    previewColumn: Name
+    group: Storage Provisioning
+  - name: All_volumes
+    type: expression
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/storage/volumes?svm=$(vservername.name)&order_by=name','','$(ProdCluster.name)','[.records[]
+      | {"Name":.name}]')
+    columns:
+      - Name
+    valueColumn: Name
+    previewColumn: Name
+    hide: true
+  - name: Find_Volumes
+    type: expression
+    expression: fnArray.from($(All_volumes)).some(volume =>
+      volume.Name.toLowerCase() === "$(volname)".toLowerCase())
+    runLocal: true
+    hide: true
+  - name: volname
+    type: text
+    label: Volume Name
+    line: line1
+    validIfNot:
+      field: Find_Volumes
+      description: Volume Name Already Exist
+    group: Storage Provisioning
+  - name: size
+    type: number
+    label: Size(in GB)
+    line: line1
+    group: Storage Provisioning
+  - name: Style
+    label: Volume Security Style
+    type: enum
+    values:
+      - unix
+      - ntfs
+    line: line1
+    group: Storage Provisioning
+  - name: Type
+    label: Volume Type
+    type: enum
+    values:
+      - RW
+      - DP
+    default: RW
+    line: line2
+    group: Storage Provisioning
+  - name: Language
+    label: Volume Language
+    type: enum
+    default: c.UTF-8
+    values:
+      - c
+      - c.UTF-8
+      - en_us
+    line: line2
+    group: Storage Provisioning
+  - name: Junction_path
+    label: Junction Path
+    type: text
+    default: /$(volname)
+    line: line2
+    group: Storage Provisioning
+  - name: exportpolicy
+    label: Export Policy
+    type: enum
+    values:
+      - Create New
+      - Use Existing
+    dependencies:
+      - name: Style
+        values:
+          - unix
+    group: Storage Provisioning
+    line: line2
+  - name: prod_ShareName
+    type: text
+    label: Share Name
+    default: $(volname)
+    line: line3
+    dependencies:
+      - name: Style
+        values:
+          - ntfs
+    group: Storage Provisioning
+  - name: prod_ShareProperties
+    type: enum
+    label: Share Show-Snapshot Property
+    line: line3
+    default: No
+    values:
+      - Yes
+      - No
+    dependencies:
+      - name: Style
+        values:
+          - ntfs
+    group: Storage Provisioning
+  - name: export
+    type: table
+    label: Provide NFS export details
+    dependencies:
+      - name: Style
+        values:
+          - unix
+      - name: exportpolicy
+        values:
+          - Create New
+    tableFields:
+      - name: clientmatch
+        type: text
+        label: clientmatch
+      - name: Protocol
+        type: enum
+        label: Protocol
+        values:
+          - nfs3
+          - nfs4
+          - cifs
+          - any
+      - name: rorule
+        type: enum
+        label: rorule
+        values:
+          - any
+          - krb5
+          - none
+          - ntlm
+      - name: rwrule
+        type: enum
+        label: rwrule
+        values:
+          - any
+          - krb5
+          - none
+          - ntlm
+      - name: superuser
+        type: enum
+        label: superuser
+        values:
+          - any
+          - krb5
+          - none
+          - ntlm
+    group: Storage Provisioning
+  - name: exportpolicyname
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/protocols/nfs/export-policies?order_by=name&svm.name=$(vservername.name)','','$(ProdCluster.name)','[.records[]]')
+    label: Export Policy Name
+    columns:
+      - name
+    valueColumn: name
+    group: Storage Provisioning
+    dependencies:
+      - name: Style
+        values:
+          - unix
+      - name: exportpolicy
+        values:
+          - Use Existing
+    line: line4
+  - name: exportpolicyrules
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/private/cli/export-policy/rule?vserver=$(vservername.name)&policyname=$(exportpolicyname.name)&fields=rorule,rwrule,superuser,policyname,protocol,clientmatch','','$(ProdCluster.name)','[.records[]
+      | {"Rule Index":.ruleindex,"Protocol":.protocol,"Client
+      Match":.clientmatch,"RO Rule":.rorule,"RW Rule":.rwrule,"Super
+      User":.superuser,"Policy Name":.policyname}]')
+    label: Export Policy Rules
+    columns:
+      - Rule Index
+      - Protocol
+      - Client Match
+      - RO Rule
+      - RW Rule
+      - Super User
+    valueColumn: Policy Name
+    previewColumn: Policy Name
+    default: __auto__
+    group: Storage Provisioning
+    dependencies:
+      - name: Style
+        values:
+          - unix
+      - name: exportpolicy
+        values:
+          - Use Existing
+    line: line4
+source: createvolume.yaml

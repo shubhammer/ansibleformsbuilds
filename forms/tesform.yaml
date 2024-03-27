@@ -1,0 +1,45 @@
+name: Test forms
+type: ansible
+playbook: testing.yaml
+description: Test Forms
+roles:
+  - public
+tileClass: has-background-info-light
+icon: hard-drive
+fields:
+  - name: vm_ipv4_addr
+    label: "IPv4 address:"
+    default: 172.16.27.123
+    type: text
+    required: true
+  - name: vm_netmask
+    label: "Netmask:"
+    default: 255.255.255.0
+    type: text
+    required: true
+  - name: vm_gateway
+    label: Gateway
+    default: 172.16.27.1
+    type: text
+    required: true
+  - name: vm_dns1_addr
+    label: "DNS1 address:"
+    placeholder: ""
+    default: 172.16.27.10
+    type: text
+  - name: vm_dns2_addr
+    label: "DNS2 address:"
+    placeholder: ""
+    default: 172.16.27.11
+    type: text
+  - name: vm_domain1_name
+    label: Domain name
+    placeholder: ""
+    default: linux.domain.services
+    type: text
+  - name: vm_hw_cpu_n
+    label: "Number of CPUs:"
+    default: "2"
+    type: text
+    required: true
+source: tesform.yaml

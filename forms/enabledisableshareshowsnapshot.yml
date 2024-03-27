@@ -1,0 +1,129 @@
+name: Enable and Disable Show Snapshot Property
+type: ansible
+playbook: enabledisableshowsnapshot.yml
+description: This workflow will Let Enable or Disable Show Snapshots Property on a Share
+roles:
+  - public
+categories:
+  - Cenitex Playbooks
+tileClass: has-background-info-light
+icon: hard-drive
+fields:
+  - type: radio
+    name: sharejob
+    label: Do You Want To??
+    values:
+      - Add Show-Snapshot Property
+      - Remove Show-Snapshot Property
+    required: true
+  - name: aiqumserver
+    type: enum
+    label: AIQUM Server
+    values:
+      - IP: 192.168.0.71
+        Location: T2
+      - IP: 192.168.0.72
+        Location: T4
+    group: Share Management
+  - name: ProdCluster
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(aiqumserver)/api/datacenter/cluster/clusters','','AIQUM','[.records[]]')
+    label: Cluster Name
+    default: __auto__
+    columns:
+      - name
+      - management_ip
+      - location
+    outputObject: false
+    previewColumn: management_ip
+    valueColumn: management_ip
+    group: Share Management
+  - name: ONTAP_cred
+    type: expression
+    expression: "'$(ProdCluster.name)'"
+    label: ONTAP Creds
+    runLocal: true
+    default: __auto__
+    asCredential: true
+    hide: true
+    group: Share Management
+  - name: vservername
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.name)/api/svm/svms?order_by=name','','$(ProdCluster.name)','[.records[]]')
+    label: SVM Name
+    columns:
+      - name
+    valueColumn: name
+    group: Share Management
+  - name: Volume
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/storage/volumes?svm=$(vservername.name)&order_by=name','','$(ProdCluster.name)','[.records[]
+      | {"Name":.name}]')
+    columns:
+      - Name
+    valueColumn: Name
+    previewColumn: Name
+    group: Share Management
+  - name: share_details
+    type: expression
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/protocols/cifs/shares?svm=$(vservername.name)&volume.name=$(Volume)&name=$(Share_name.name)&fields=name,path,show_snapshot','','$(ProdCluster.name)','.records[].show_snapshot
+      ')
+    hide: false
+    columns:
+      - show_snapshot
+    valueColumn: show_snapshot
+    dependencies:
+      - name: sharejob
+        values:
+          - Add Show-Snapshot Property
+  - name: share_details1
+    type: expression
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/protocols/cifs/shares?svm=$(vservername.name)&volume.name=$(Volume)&name=$(Share_nosnap.name)&fields=name,path,show_snapshot','','$(ProdCluster.name)','.records[].show_snapshot
+      ')
+    hide: false
+    columns:
+      - show_snapshot
+    valueColumn: show_snapshot
+    dependencies:
+      - name: sharejob
+        values:
+          - Remove Show-Snapshot Property
+  - name: Share_name
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/protocols/cifs/shares?svm=$(vservername.name)&volume.name=$(Volume)&fields=name,path,show_snapshot&order_by=name','','$(ProdCluster.name)','[.records[]
+      ]')
+    columns:
+      - name
+      - path
+      - show_snapshot
+    label: Share Name
+    valueColumn: name
+    previewColumn: name
+    validIfNot:
+      field: share_details
+      description: Show-Snapshot Property Already Enabled
+    dependencies:
+      - name: sharejob
+        values:
+          - Add Show-Snapshot Property
+    group: Share Management
+  - name: Share_nosnap
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(ProdCluster.management_ip)/api/protocols/cifs/shares?svm=$(vservername.name)&volume.name=$(Volume)&fields=name,path,show_snapshot&order_by=name','','$(ProdCluster.name)','[.records[]
+      ]')
+    columns:
+      - name
+      - path
+      - show_snapshot
+    label: Share Details
+    valueColumn: name
+    previewColumn: name
+    validIf:
+      field: share_details1
+      description: Show-Snapshot Property Already Disabled
+    dependencies:
+      - name: sharejob
+        values:
+          - Remove Show-Snapshot Property
+    group: Share Management
+source: enabledisableshareshowsnapshot.yml

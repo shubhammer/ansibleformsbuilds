@@ -1,0 +1,129 @@
+name: Configure Snapmirror of an Existing Volume for customer
+type: ansible
+playbook: createsnapmirror.yml
+description: This workflow will configure Snapmirror on an existing NetApp
+  Volume between customer cluster and T2/T4 Clusters
+roles:
+  - public
+categories:
+  - Cenitex Playbooks
+tileClass: has-background-info-light
+icon: hard-drive
+fields:
+  - name: ProdCluster
+    type: enum
+    label: Prod Cluster
+    values:
+      - sftp1
+      - sftp2
+      - cluster2
+  - name: ProdVserver
+    type: text
+    label: Prod Vserver Name
+  - name: ProdVolume
+    type: text
+    label: Prod Volume Name
+  - name: Backup_aiqumserver
+    type: enum
+    label: Backup AIQUM Server
+    values:
+      - IP: 192.168.0.71
+        Location: T2
+      - IP: 192.168.0.72
+        Location: T4
+    group: Backup Configuration
+    line: line1
+  - name: BackupCluster
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(Backup_aiqumserver)/api/datacenter/cluster/clusters','','AIQUM','[.records[]]')
+    label: Backup Cluster Name
+    default: __auto__
+    columns:
+      - name
+      - management_ip
+      - location
+    outputObject: false
+    previewColumn: management_ip
+    valueColumn: management_ip
+    group: Backup Configuration
+    line: line1
+  - name: ONTAP_cred
+    type: expression
+    expression: "'$(BackupCluster.name)'"
+    label: ONTAP Creds
+    runLocal: true
+    default: __auto__
+    asCredential: true
+    hide: true
+    group: Backup Configuration
+  - name: backupvservername
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(BackupCluster.management_ip)/api/svm/peers?peer.svm.name=$(ProdVserver)&fields=*&peer.cluster.name=$(ProdCluster)','','$(BackupCluster.name)','[.records[]  |
+      {"DR_SVM":.svm.name,"Prd_Local_Name":.name}]')
+    label: Backup SVM Name
+    columns:
+      - DR_SVM
+    valueColumn: "*"
+    default: __auto__
+    line: line1
+    group: Backup Configuration
+  - name: DR_aggrname
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(BackupCluster.management_ip)/api/storage/aggregates?fields=*&order_by=name','','$(BackupCluster.name)','[.records[]|
+      {"Name":.name, "Size(GB)":.space.block_storage.size | fn2GB | round,
+      "available(GB)":.space.block_storage.available | fn2GB | round, "used
+      %":.space.block_storage.used_percent}]' )
+    label: Backup Aggregate Name
+    valueColumn: Name
+    previewColumn: Name
+    group: Backup Configuration
+    line: line1
+  - name: DR_All_volumes
+    type: expression
+    expression: fn.fnRestBasic('get','https://$(BackupCluster.management_ip)/api/storage/volumes?svm=$(backupvservername)&order_by=name','','$(BackupCluster.name)','[.records[]
+      | {"Name":.name}]')
+    columns:
+      - Name
+    valueColumn: Name
+    previewColumn: Name
+    hide: false
+  - name: DR_Find_Volumes
+    type: expression
+    expression: fnArray.from($(DR_All_volumes)).some(volume =>
+      volume.Name.toLowerCase() === "$(DR_volname)".toLowerCase())
+    runLocal: true
+    hide: true
+  - name: DR_volname
+    type: text
+    label: Backup Volume Name
+    line: line4
+    validIfNot:
+      field: DR_Find_Volumes
+      description: Volume Name Already Exist
+    default: sv_$(ProdVolume)
+    group: Backup Configuration
+  - name: DR_size
+    type: number
+    label: Size(in GB)
+    line: line4
+    group: Backup Configuration
+  - name: SMPolicy
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(BackupCluster.management_ip)/api/snapmirror/policies?order_by=name&fields=*','','$(BackupCluster.name)','[.records[]]')
+    label: Snapmirror Policy
+    columns:
+      - name
+      - type
+    valueColumn: name
+    line: line5
+    group: Backup Configuration
+  - name: cron
+    type: enum
+    expression: fn.fnRestBasic('get','https://$(BackupCluster.management_ip)/api/cluster/schedules?order_by=name','','$(BackupCluster.name)','[.records[]]')
+    label: Schedule
+    columns:
+      - name
+    valueColumn: name
+    line: line5
+    group: Backup Configuration
+source: createsnapmirrorcustomer.yaml

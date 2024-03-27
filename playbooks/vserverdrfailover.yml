@@ -1,0 +1,385 @@
+---
+- hosts: localhost
+  name: NSW Transport Scheduled SVM Failover
+  gather_facts: false
+  vars:
+    source: &source_login
+      hostname: "{{ ProdCluster }}"
+      username: "{{ ONTAP_cred.user }}"
+      password: "{{ ONTAP_cred.password }}"
+      https: true
+      validate_certs: false
+
+    destination: &destination_login
+      hostname: "{{ DRCluster }}"
+      username: "{{ DR_ONTAP_cred.user }}"
+      password: "{{ DR_ONTAP_cred.password }}"
+      https: true
+      validate_certs: false
+
+  collections:
+    - netapp.ontap
+  tasks:
+    #'----------------------------------------------------------------------------
+    #' Get the source SVM.
+    #' cluster1::> vserver show -vserver vserver2 -fields vserver, type, subtype, operational-state, admin-state
+    #'----------------------------------------------------------------------------
+   
+    - name: Get Source SVM
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - svm/svms
+        <<: *source_login
+        fields:
+          - state,name,subtype
+        use_python_keys: true
+        parameters:
+            name: "{{ source_svm }}"
+            state: running
+            subtype: default
+      register: production_svm
+
+    #'----------------------------------------------------------------------------
+    #' Raise an error if the production SVM does not exist.
+    #'----------------------------------------------------------------------------
+
+    - name: Production SVM not found
+      fail:
+        msg: "The production SVM {{ source_svm }} either does not exist or is not in a running state on cluster {{ ProdCluster }}"
+      when:
+        - production_svm.ontap_info.svm_svms.num_records == '0'
+    #'----------------------------------------------------------------------------
+    #' Get the destination SVM.
+    #' cluster2::> vserver show -vserver vserver1_dr -fields vserver, type, subtype, operational-state, admin-state
+    #'----------------------------------------------------------------------------
+
+    - name: Get Destination SVM
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+          - svm/svms
+        <<: *destination_login
+        fields:
+          - state,name,subtype
+        use_python_keys: true
+        parameters:
+            name: "{{ destination_svm }}"
+            state: stopped
+            subtype: dp_destination
+      register: dr_svm
+
+    #'----------------------------------------------------------------------------
+    #' Raise an error if the disaster recovery SVM does not exist.
+    #'----------------------------------------------------------------------------
+
+    - name: Disaster Recovery SVM not found
+      fail:
+        msg: "The disaster recovery SVM {{ destination_svm }} either does not exist or is not in a stopped / subtype: DP_Destination state on cluster {{ DRCluster }}"
+      when:
+        - dr_svm.ontap_info.svm_svms.num_records == 0
+    
+    #'----------------------------------------------------------------------------
+    #' Get Source Volume Details
+    #'----------------------------------------------------------------------------
+
+    - name: Get Source volume Names
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+            - storage/volumes
+        <<: *source_login
+        fields:
+          - name
+        parameters:
+            svm.name: "{{ source_svm }}"
+        use_python_keys: true
+      register: volnames
+
+    #'----------------------------------------------------------------------------
+    #' Debug Details
+    #'----------------------------------------------------------------------------
+
+    - name: Get current date
+      set_fact:
+          current_date: "{{ lookup('pipe', 'date +%Y-%m-%d') }}"
+    - name: Set snapshot name
+      set_fact:
+        snapshot_name: "SVM-DR_{{ current_date }}"
+
+    #'----------------------------------------------------------------------------
+    #' Create Snapshot
+    #'----------------------------------------------------------------------------
+    - name: Take snapshot before SVM DR
+      tags:
+      - create
+      netapp.ontap.na_ontap_snapshot:
+        <<: *source_login
+        snapshot: "{{ snapshot_name }}"
+        volume: "{{ item.name }}"
+        vserver: "{{ source_svm }}"
+      loop: "{{  volnames.ontap_info.storage_volumes.records }}"
+
+    #'----------------------------------------------------------------------------
+    #' Get the SVM's SnapMirror Relationship status.
+    #' cluster2::> snapmirror show -destination-path vserver1_dr: -source-path vserver1:
+    #'----------------------------------------------------------------------------
+
+    - name: Get SVM SnapMirror Relationship
+      netapp.ontap.na_ontap_rest_cli:
+        <<: *destination_login
+        command: 'snapmirror'
+        verb: GET
+        params:
+         {
+            'destination_path':  "{{ destination_svm }}:",
+            'source_path': "{{ source_svm }}:",
+            'fields': "status,state,policy,schedule,type"
+         }
+      register: svm_snapmirror
+      tags: get_svm_snapmirror
+
+    #'----------------------------------------------------------------------------
+    #' Abort the SVM SnapMirror relationship if it is currently transferring.
+    #' cluster2::> snapmirror abort -destination-path vserver1_dr: -source-path vserver1:
+    #'----------------------------------------------------------------------------
+
+    - name: SnapMirror Abort
+      netapp.ontap.na_ontap_rest_cli:
+        command: 'snapmirror/abort'
+        verb: PATCH
+        params:
+          {
+            'destination_path': "{{ destination_svm }}:",
+            'source_path': "{{ source_svm }}:"
+          }
+        <<: *destination_login
+      when:
+        - svm_snapmirror is defined
+        - svm_snapmirror.msg.records[0].state == "snapmirrored"
+        - svm_snapmirror.msg.records[0].status == "transferring" 
+        - svm_snapmirror.msg.num_records == 1
+      register: abort
+      tags: snapmirror_abort
+
+    #'----------------------------------------------------------------------------
+    #' Wait for SnapMirror Abort
+    #' cluster2::> snapmirror show -destination-path vserver1_dr:
+    #'----------------------------------------------------------------------------
+
+    - name: Waiting for SnapMirror Abort
+      netapp.ontap.na_ontap_rest_cli:
+        <<: *destination_login
+        command: 'snapmirror'
+        verb: GET
+        params:
+         {
+            'destination_path':  "{{ destination_svm }}:",
+            'source_path': "{{ source_svm }}:",
+            'fields': "status"
+         }
+      register: snapmirror_status
+      until: snapmirror_status.msg.records[0].status == "idle" or svm_snapmirror.msg.records[0].status == "quiesced"
+      retries: 600
+      delay: 10
+      tags: snapmirror_abort_wait
+
+    #'----------------------------------------------------------------------------
+    #' Update the SVM SnapMirror relationship.
+    #' cluster2::> snapmirror update -destination-path vserver1_dr: -source-path vserver1:
+    #'----------------------------------------------------------------------------
+
+    - name: Update SnapMirror
+      na_ontap_snapmirror:
+        state: present
+        relationship_state: active
+        update: true
+        source_endpoint:
+          path: "{{ source_svm + ':' }}"
+        destination_endpoint:
+          path: "{{ destination_svm + ':' }}"
+        <<: *destination_login
+      when:
+        - svm_snapmirror is defined
+        - svm_snapmirror.msg.records[0].state == "snapmirrored" 
+        - svm_snapmirror.msg.num_records == 1
+      tags: snapmirror_break
+
+    #'----------------------------------------------------------------------------
+    #' Wait for SnapMirror Updates.
+    #' cluster2::> snapmirror show -destination-path vserver1_dr:
+    #'----------------------------------------------------------------------------
+
+    - name: Waiting for SnapMirror Updates
+      netapp.ontap.na_ontap_rest_cli:
+          <<: *destination_login
+          command: 'snapmirror'
+          verb: GET
+          params:
+            {
+                'destination_path': "{{ destination_svm }}:",
+                'source_path': "{{ source_svm }}:",
+                'fields': "status"
+            }
+      register: snapmirror_status
+      until: snapmirror_status.msg.records[0].status == "idle"
+      retries: 600
+      delay: 10
+      tags: snapmirror_update_wait
+
+    #'----------------------------------------------------------------------------
+    #' Quiesce the SVM SnapMirror relationship.
+    #' cluster2::> snapmirror quiesce -destination-path vserver1_dr -source-path vserver2
+    #'----------------------------------------------------------------------------
+
+    - name: Quiesce SnapMirror
+      netapp.ontap.na_ontap_rest_cli:
+        command: 'snapmirror/quiesce'
+        verb: PATCH
+        params:
+          {
+            'destination_path': "{{ destination_svm }}:",
+            'source_path': "{{ source_svm }}:"
+          }
+        <<: *destination_login
+      when:
+        - svm_snapmirror is defined
+        - svm_snapmirror.msg.records[0].status == "idle" or svm_snapmirror.msg.records[0].status == "quiesced"
+        - svm_snapmirror.msg.records[0].state == "snapmirrored" 
+        - svm_snapmirror.msg.num_records == 1
+      tags: snapmirror_quiesce
+
+    #'----------------------------------------------------------------------------
+    #' Wait for SnapMirror Quiesce.
+    #' cluster2::> snapmirror show -destination-path vserver1_dr:
+    #'----------------------------------------------------------------------------
+
+    - name: Waiting for SnapMirror Quiesce
+      netapp.ontap.na_ontap_rest_cli:
+        <<: *destination_login
+        command: 'snapmirror'
+        verb: GET
+        params:
+         {
+            'destination_path':  "{{ destination_svm }}:",
+            'source_path': "{{ source_svm }}:",
+            'fields': "status"
+         }
+      register: snapmirror_status
+      until: snapmirror_status.msg.records[0].status == "quiesced"
+      retries: 600
+      delay: 10
+      tags: snapmirror_quiesce_wait
+
+    #'----------------------------------------------------------------------------
+    #' Break the SVM SnapMirror relationship.
+    #' cluster2::> snapmirror break -destination-path vserver1_dr -source-path vserver1
+    #'----------------------------------------------------------------------------
+
+    - name: Break SnapMirror
+      netapp.ontap.na_ontap_rest_cli:
+        command: 'snapmirror/break'
+        verb: PATCH
+        params:
+          {
+            'destination_path': "{{ destination_svm }}:",
+            'source_path': "{{ source_svm }}:"
+          }
+        <<: *destination_login
+      when:
+        - svm_snapmirror is defined
+        - svm_snapmirror.msg.records[0].state == "snapmirrored" 
+        - svm_snapmirror.msg.num_records == 1       
+      tags: snapmirror_break
+
+    #'----------------------------------------------------------------------------
+    #' Stop the production SVM.
+    #' cluster1::> vserver stop -vserver vserver1
+    #'----------------------------------------------------------------------------
+
+    - name: Stop Production SVM
+      netapp.ontap.na_ontap_svm:
+        state: present
+        name: "{{ source_svm }}"
+        admin_state: stopped
+        <<: *source_login
+      when:
+        - production_svm is defined
+        - production_svm.ontap_info.svm_svms.records[0].state == "running"
+        - production_svm.ontap_info.svm_svms.num_records == 1
+      tags: stop_production_svm
+    
+    - name: Wait Production SVM stopping
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+            - vserver_info
+        use_python_keys: true
+        parameters:
+           name: "{{ source_svm }}"
+        fields:
+         - state
+        <<: *source_login
+      register: production_svm_state
+      until: production_svm_state.ontap_info.svm_svms.records[0].state == "stopped"
+      retries: 60
+      delay: 5
+      tags: wait_production_svm_stopped
+
+    #'----------------------------------------------------------------------------
+    #' Start the DR SVM.
+    #' cluster2::> vserver start -vserver vserver1_dr
+    #'----------------------------------------------------------------------------
+
+    - name: Start DR SVM
+      netapp.ontap.na_ontap_svm:
+        state: present
+        name: "{{ destination_svm }}"
+        admin_state: running
+        <<: *destination_login
+      when:
+        - dr_svm is defined
+        - dr_svm.ontap_info.svm_svms.records[0].state == "stopped"
+        - dr_svm.ontap_info.svm_svms.num_records == 1
+      tags: start_dr_svm
+#'----------------------------------------------------------------------------
+    #' Wait for the DR SVM to reach a running state.
+    #' cluster2::> vserver show -vserver vserver1 -fields vserver, operational-state, admin-state
+    #'----------------------------------------------------------------------------
+
+    - name: Wait DR SVM running
+      netapp.ontap.na_ontap_rest_info:
+        gather_subset:
+            - vserver_info
+        use_python_keys: true
+        parameters:
+           name: "{{ destination_svm }}"
+        fields:
+         - state
+        <<: *destination_login
+      register: dr_svm_state
+      until: dr_svm_state.ontap_info.svm_svms.records[0].state == "running"
+      retries: 60
+      delay: 5
+      tags: wait_dr_svm_running
+
+    - name: sleep for 10 seconds
+      wait_for:
+         timeout: 10
+      tags: wait
+
+    #'----------------------------------------------------------------------------
+    #' Create the reverse SVM SnapMirror relationship.
+    #' cluster1::> snapmirror create -destination-path vserver1: -source-path vserver1_dr: -policy MirrorAndVault -schedule hourly -identity-preserve true
+    #'----------------------------------------------------------------------------
+
+    - name: Create SVM SnapMirror
+      na_ontap_snapmirror:
+        state: present
+        source_endpoint:
+          path: "{{ destination_svm + ':' }}"
+        destination_endpoint:
+          path: "{{ source_svm + ':' }}"
+        relationship_type: extended_data_protection
+        schedule: "{{ svm_snapmirror.msg.records[0].schedule  }}"
+        policy: "{{ svm_snapmirror.msg.records[0].policy  }}"
+        initialize: false
+        identity_preserve: true
+        <<: *source_login
+      tags: snapmirror_create

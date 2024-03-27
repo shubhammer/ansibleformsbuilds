@@ -1,0 +1,65 @@
+---
+- hosts: localhost
+  name: NSW Transport Scheduled SVM Failover
+  gather_facts: false
+  vars:
+    source: &source_login
+      hostname: 192.168.0.102
+      username: admin
+      password: Netapp1!
+      https: true
+      validate_certs: false
+
+    destination: &destination_login
+      hostname: "{{ DRCluster }}"
+      username: "{{ DR_ONTAP_cred.user }}"
+      password: "{{ DR_ONTAP_cred.password }}"
+      https: true
+      validate_certs: false
+
+  collections:
+    - netapp.ontap
+  tasks:
+    - name: Get SVM SnapMirror Relationship
+      netapp.ontap.na_ontap_zapit:
+        zapi:
+          snapmirror-get-iter:
+            desired-attributes:
+              snapmirror-info:
+                - destination-cluster:
+                - destination-location:
+                - destination-vserver:
+                - mirror-state:
+                - policy:
+                - relationship-status:
+                - relationship-type:
+                - schedule:
+                - source-cluster:
+                - source-location:
+                - source-vserver:
+            query:
+              snapmirror-info:
+                - destination-location: 'svm2_cluster1-MIG-DR:'
+                - source-location: 'svm2_cluster1:'
+                - relationship-type: extended_data_protection
+            max-records: 1
+        <<: *source_login
+      register: svm_snapmirror
+    - name: zapi
+      debug:
+        var: svm_snapmirror
+    - name: Get Source SM
+      netapp.ontap.na_ontap_rest_cli:
+        <<: *source_login
+        command: 'snapmirror'
+        verb: GET
+        params:
+         {
+            'destination_path': 'svm2_cluster1-MIG-DR:',
+            'source_path':  'svm2_cluster1:',
+            'fields': "status,state,policy,schedule,type"
+         }
+      register: SM			
+    - name: Deubh SM
+      debug:
+        var: SM.msg
